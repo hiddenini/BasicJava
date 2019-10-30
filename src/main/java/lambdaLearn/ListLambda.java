@@ -21,5 +21,7 @@ public class ListLambda {
         System.out.println("下面这种也ok");
 
         list.forEach(System.out::println);
+
+        //test github commit
     }
 }
