@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class Start {
     public static void main(String[] args) {
-        AtomicInteger atomicInteger;
+        AtomicInteger atomicInteger=new AtomicInteger(10);
+        atomicInteger.incrementAndGet();
     }
 }
