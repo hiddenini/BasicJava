@@ -13,12 +13,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 验证下来的结果是:使用多线程去分别去读取单个文件时消耗的时间比单线程去读取单个文件时的要长。总体消耗的时间的差不多.效果不是很明显
- * 
+ * 使用CyclicBarrier多线程去读取本地的文件，并且使用final类型的数组统计总数
  * @author xz
  *
  */
 
+/**
+ * 这里使用	final List<Integer> list=new ArrayList<>();去接收文件总数量是可以的。
+ * 原因是当所有的线程都执行完毕之后,单独的一个线程去使用了list,参见CyclicBarrier的构造方法
+ *
+ * 但是ReadLocalFilesWithCdl中是不可以的，因为是多个线程同时使用到了这个list
+ */
 public class ReadLocalFilesWithCyb {
 
 

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
- * 使用三个线程读取本地的三个问题并统计
+ * 直接是使用线程池读取本地的三个文件并使用AtomicInteger统计总数
  */
 public class ReadLocalFilesWithAtomic {
 

@@ -15,8 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
- * 使用多线程访问本地的文件,总耗时比单个文件多一点点，未进行记录总数的统计
- * @author pc
+ * 使用多线程访问本地的文件,总耗时比单个文件多一点点，并统计总数
+ * @author xz
  *
  */
 public class ReadLocalFilesWithCdl {
@@ -24,17 +24,16 @@ public class ReadLocalFilesWithCdl {
 
 	private CountDownLatch startGate;
 	private CountDownLatch endGate;
-	
-	private static AtomicInteger total=new AtomicInteger(0);
+
 	
 	//final关键字,当你创建一个对象时，使用final关键字能够使得另一个线程不会访问到处于“部分创建”的对象
 	//而且，很显然在某些场景下，final也可以解决一定的安全问题,但是下面这种就是有问题的，偶尔会输出null和少于三个singleSum
 	//private final static List<Integer> list=new ArrayList<>();
-	
-	//或者可以使用AtomicInteger完成统计
-	
-	
 	private  static List<Integer> list=Collections.synchronizedList(new ArrayList<>());
+
+
+	//或者可以使用AtomicInteger完成统计
+	private static AtomicInteger total=new AtomicInteger(0);
 
 	public ReadLocalFilesWithCdl(int nThread, CountDownLatch startGate, CountDownLatch endGate) {
 
