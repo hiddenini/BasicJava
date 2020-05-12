@@ -28,13 +28,13 @@ public class CollectLearn {
 
         List<Double> doubleList=new ArrayList<>();
 
-        //将list中的每个元素扩大2倍后得到新的集合(对每一个元素进行同样的操作)
-        doubleList=list.stream().map(n -> {
-            System.out.println("n:"+n);
-            return 2*n;
+        //将list中的每个元素扩大2倍后得 到新的集合(对每一个元素进行同样的操作)
+        list = list.stream().map(n -> {
+            System.out.println("n:" + n);
+            return 2 * n;
         }).collect(Collectors.toList());
 
-        System.out.println("doubleList:"+doubleList);
+        System.out.println("doubleList:"+list);
 
         List<String> stringList= Arrays.asList("java","php","c++","js");
 
