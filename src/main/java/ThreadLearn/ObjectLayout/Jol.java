@@ -7,7 +7,7 @@ import org.openjdk.jol.info.ClassLayout;
  * <p>
  * 未加锁
  * <p>
- * java.lang.Object object internals:
+ * java.java.lang.Object object internals:
  * OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
  * 0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
  * 4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
@@ -19,7 +19,7 @@ import org.openjdk.jol.info.ClassLayout;
  * <p>
  * 加上synchronized
  * <p>
- * java.lang.Object object internals:
+ * java.java.lang.Object object internals:
  * OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
  * 0     4        (object header)                           a8 f3 1c 03 (10101000 11110011 00011100 00000011) (52229032)
  * 4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
@@ -89,6 +89,10 @@ import org.openjdk.jol.info.ClassLayout;
  * }
  * <p>
  * wc(缓存) 合并写技术 cpu内部的一个缓存，4个字节
+ * <p>
+ * synchronized 底层原语:monitorenter monitorexit
+ * volatile  底层原语:lockaddl
+ * cas 底层原语:汇编语句原语支持 lock cmpxchg指令 lock指令在执行后面指令的时候锁定一个北桥信号 不采用锁总线的方式
  */
 public class Jol {
     public static void main(String[] args) {
