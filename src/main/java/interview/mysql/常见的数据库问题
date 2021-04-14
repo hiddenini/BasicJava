@@ -1,0 +1,159 @@
+1--为什么mysql选择B+ Tree作为索引的结构
+    1--链表
+    2--hash表 不支持范围查询    不支持索引完成排序        不支持联合索引的最左前缀匹配规则
+    3--二叉树(avl 红黑树 bst) 最大的缺点都是都是二叉树 数据节点大的时候树会变得很深(意味着更多的io操作)
+    4--B Tree 满足了树的深度问题
+    5--B+ Tree  B+节点关键字才有左闭合区间              B+非叶节点不保存数据的相关信息，只保存关键字和子节点引用
+                B+关键字对应的数据保存在叶子节点中       B+叶子节点是顺序排列的，并且相邻节点居然有顺序引用的关系（双向链表）
+
+2--一个表中可以有多个索引,但是数据只存储一份
+
+3--既然数据值存储一份,那么其他的索引如何检索到数据？回表问题
+    在innodb中 数据在插入的时候必须要跟索引在一起 如果有主键则选择主键 如果没有主键 则跟唯一键放在一起 如果没有唯一键 那么跟
+    内置的6字节的rowId放在一起 无论如何 总是需要一个索引列的
+    其他的索引中叶子节点的数据都是数据所在索引的key值(主键id 或唯一键值)
+
+4--数据跟索引是否放在一起,如果是就是聚簇索引
+
+eg 假设一个表 字段  id,name,age,gender id是主键 name是普通索引
+
+5--回表
+        select  * from table where name="xx" 使用普通索引查询的时候需要经过2次查询 第一次查询name索引的b+Tree
+        获取到name对应的id    再根据id去id索引的b+Tree去查询到具体的记录  效率不高 io的次数变多
+
+6--索引覆盖
+        何为索引覆盖，就是在用这个索引查询时，使它的索引树，查询到的叶子节点上的数据可以覆盖到你查询的所有字段，这样就可以避免回表。
+        select  id,name from table where name="xx"
+        第一次查询name索引的b+Tree 获取到name对应的id直接可以返回了 不需要再去id索引的b+Tree进行查询 效率高应该
+        尽可能的使用索引覆盖来代替回表 所以有时候可以考虑将不相关的设置为索引列
+        select  id,name,age from table where name="xx" 可以考虑将name,age设置为一个联合索引
+
+eg 假设一个表 字段  id,name,age,gender id是主键 name, age是联合索引
+
+7--最左匹配 一个索引中包含多个索引列(联合索引)
+        select  * from table where name="xx" ok
+        select  * from table where name="xx" and age=? ok
+        select  * from table where age=? and name=? ok(mysql的优化器会进行优化)
+        select  * from table where age="xx"  no
+
+        原理: eg (b,c,d)三个字段的联合索引
+        优先使用b列构建，当b列值相等时再以c列排序，若c列的值也相等则以d列排序
+        对于联合索引，存储引擎会首先根据第一个索引列排序
+        联合索引是首先使用多列索引的第一列构建的索引树
+
+最左匹配和索引覆盖是要联合起来看的
+        eg:
+        create table abc(id int PRIMARY KEY,a int, b int ,c int);
+
+        alter table abc add index idx_abc(a,b,c);
+        (index 代表的是会对整个索引树进行扫描，如例子中的，最右列 address，就会导致扫描整个索引树。)
+        (ref 代表 mysql 会根据特定的算法查找索引，这样的效率比 index 全扫描要高一些。但是，它对索引结构有一定的要求，索引字段必须是有序的。而联合索引就符合这样的要求)
+
+        EXPLAIN select * from abc where a=1; ok  type ref key idx_abc
+        EXPLAIN select * from abc where a=1 and b=1; ok  type ref key idx_abc
+        EXPLAIN select * from abc where a=1 and b=1 and c=1; ok  type ref key idx_abc
+
+        下面这2个都不符合最左匹配原则 但是都走了索引 原因是索引覆盖
+        个人理解是只要条件中使用了联合索引的任何一个字段 比如下面的2个例子,并且查询的字段都可以直接通过联合索引的索引树拿到
+        (不需要回表)那么都会用到索引 如果是按照最左匹配,那么type则为ref 否则为index
+
+        这个地方不符合最左但是符合索引覆盖 实际上使用这张表的任何条件都走索引 因为id 为主键 (a,b,c)为联合索引
+        意味着联合索引的B+树种有这个表的所有字段 所以无论如何都满足了索引覆盖 只是type 为index还是res的问题了
+        EXPLAIN select * from abc where b=1; ok  type index key idx_abc
+
+        EXPLAIN select * from abc where c=1; ok  type index key idx_abc
+
+        所以下面的例子:
+        create table abc1(id int PRIMARY KEY,a int, b int ,c int,d int);
+
+        alter table abc1 add index idx_abc(a,b,c);
+        insert into abc1 VALUES(1,2,3,4,5);
+
+        EXPLAIN select * from abc1 where a=1;  ok  type ref key idx_abc
+        EXPLAIN select * from abc1 where a=1 and b=1;    ok  type ref key idx_abc
+        EXPLAIN select * from abc1 where a=1 and b=1 and c=1;    ok  ref index key idx_abc
+
+        EXPLAIN select id ,a ,b,c from abc1 where b=1; ok  type index key idx_abc
+
+        这个地方既不符合最左匹配 因为条件where b=1 联合索引是(a,b,c)
+        又不符合索引覆盖 因为联合索引的B+树中只有 a b c id 并没有d 所以还是需要回表 所以走全表扫描
+        EXPLAIN select * from abc1 where b=1;   no  type ALL key NULL
+
+
+
+8--索引下推
+        select  * from table where name="xx" and age=?
+        在没有索引下推之前,先根据name去存储殷勤中拉去符合结果的数据,返回到server层,在server层中对age的条件进行过滤
+        有了索引下推之后 直接根据name age2个条件直接从存储引擎中拉结果 不需要在server层过滤
+        在mysql5.7版本后默认开启
+
+9--MVCC
+    MVCC，Multi-Version Concurrency Control，多版本并发控制。这项技术使得InnoDB的事务隔离级别下执行一致性读操作有了保证
+    换言之，就是为了查询一些正在被另一个事务更新的行，并且可以看到它们被更新之前的值。这是一个可以用来增强并发性的强大技术
+    查询不用等待另一个事务释放锁。
+
+    InnoDB多版本的实现
+    在内部，InnoDB向数据库中存储的每一行数据添加三个字段。
+    （1）DB_TRX_ID字段，6字节。表示插入或更新行的最后一个事务的事务标识符。此外，删除在内部被视为更新，其中行中的特殊位被设置为将其标记为已删除。
+
+    （2）DB_ROLL_PTR字段，7字节，叫做回滚指针（roll pointer）。回滚指针指向写入回滚段的撤消日志（Undo Log）。如果行已更新，则撤消日志包含重建更新前该行内容所需的信息。
+
+    （3）DB_ROW_ID字段，6字节。包含一个随着新行插入而单调增加的行ID，如果innodb自动生成聚集索引，则该索引包含行ID值。否则，DB_ROW_ID列不会出现在任何索引中。
+
+10--mysql如何保证持久性
+    redo log
+    MySQL采用了一种叫WAL（Write Ahead Logging）提前写日志的技术。意思就是说，发生了数据修改操作先写日志记录下来，等不忙的时候再持久化到磁盘。这里提到的日志就是redo log
+    redo log称为重做日志，当有一条记录需要修改的时候，InnoDB引擎会先把这条记录写到redo log里面。redo log是物理格式日志，它记录的是对于每个页的修改。
+    redo log是由两部分组成的：
+    一是内存中的重做日志缓冲（redo log buffer）
+    二是用来持久化的重做日志文件（redo log file）。
+    所以为了消耗不必要的IO操作，事务再执行过程中产生的redo log首先会redo log buffer中
+    之后再统一存入redo log file刷盘进行持久化，这个动作成为fsync。
+    至于什么时候从redo log buffer写入redo log file，可以通过InnoDB提供的innodb_flush_log_at_trx_commit参数来配置
+    设置为0的时候，表示事物提交的时候不写入重做日志文件持久化。
+    设置为1的时候，表示每次事务提交都将redo log直接持久化到磁盘
+    设置为2的时候，表示每次事务提交时将重做日志写入重做日志文件，但是写入的仅仅是文件系统的缓存page cache不进行fsync。
+    InnoDB有一个后台线程master thread，每隔一秒就会把redo log buffer中的日志文件调用write写到文件系统缓存page cache，然后调用fsync持久化磁盘
+    虽然设置成0或者2可以提升效率，但是也丧失了事务持久性的特性。
+    如果设置为0，事务提交之后master thread还没有来得及持久化MySQL就宕机了，那么这部分数据将会丢失。、
+    如果设置成为2，MySQL发生宕机并不会导致数据丢失，但是当操作系统宕机时，重启数据库将会丢失文件系统缓存page cache中那部分数据
+
+
+11--mrr 简单说就是MRR 通过把「随机磁盘读」，转化为「顺序磁盘读」，从而提高了索引查询的性能。
+        https://zhuanlan.zhihu.com/p/110154066
+
+12--mysql acid如何实现的 https://www.cnblogs.com/kismetv/p/10331633.html
+    原子性：语句要么全执行，要么全不执行，是事务最核心的特性，事务本身就是以原子性来定义的；实现主要基于undo log
+    持久性：保证事务提交后不会因为宕机等原因导致数据丢失；实现主要基于redo log
+    隔离性：保证事务执行尽可能不受其他事务影响；InnoDB默认的隔离级别是RR，RR的实现主要基于锁机制（包含next-key lock）、MVCC（包括数据的隐藏列、基于undo log的版本链、ReadView）
+    一致性：事务追求的最终目标，一致性的实现既需要数据库层面的保障，也需要应用层面的保障
+
+13--隔离级别
+    读未提交
+    读已提交
+    可重复读
+    可串行化
+    MySql 认是repeatable Oracle默认是read commited
+    MySql的主从复制,是基于binlog复制的
+    那Mysql在5.0这个版本以前，binlog只支持STATEMENT这种格式！而这种格式在读已提交(Read Commited)
+    这个隔离级别下主从复制是有bug的
+    因此Mysql将可重复读(Repeatable Read)作为默认的隔离级别！
+
+    在MySQL的早期版本（大概是5.1）中，binlog的默认格式是语句格式。这时候如果启用了RC的隔离级别
+    binlog记录的顺序可能与实际不一致。
+    所以系统做了一个判断，如果隔离级别为RC，则binlog格式必须要是Mix或者row。
+    由于当时的默认参数binlog的默认格式是语句格式所以隔离级别的默认值就设置到了RR。
+
+14-- 脏读、不可重复读和幻读
+     脏读：当前事务(A)中可以读到其他事务(B)未提交的数据（脏数据），这种现象是脏读
+     不可重复读:在事务A中先后两次读取同一个数据，两次读取的结果不一样，这种现象称为不可重复读。
+               脏读与不可重复读的区别在于：前者读到的是其他事务未提交的数据，后者读到的是其他事务已提交的数据。
+     幻读:在事务A中按照某个条件先后两次查询数据库，两次查询结果的条数不同，这种现象称为幻读。
+                不可重复读与幻读的区别可以通俗的理解为：前者是数据变了，后者是数据的行数变了
+
+15--Redo log和binlog都是记录事务日志，他们有什么区别？
+    binlog是mysql自带的，他会记录所有存储引擎的日志文件。而redo log是InnoDB特有的，他只记录改存储引擎产生的日志文件
+
+    记录内容不同：binlog是逻辑日志，记录这个语句具体操作了什么内容。Redo log是屋里日志，记录的是每个页的更改情况。
+
+    写入方式不同：redo log是循环写，只有那么大的空间。binlog采用追加写入，当一个binlog文件写到一定大小后会切换到下一个文件。
