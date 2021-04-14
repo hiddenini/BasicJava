@@ -1,7 +1,5 @@
 package reference;
 
-import com.sun.scenario.effect.impl.sw.sse.SSEBlend_SRC_OUTPeer;
-
 import java.lang.ref.WeakReference;
 
 /**
@@ -18,7 +16,7 @@ public class WeakReferenceL {
          * set 时将key(ThreadLocal) 和value(new M())生成了一个Entry 这个Entry继承自WeakReference<ThreadLocal
          *
          * 为什么要用弱引用?
-         * 引用的关系是 t  ->ThreadLocal    ThreadLocalMap(k,v)  k--->ThreadLocal
+         * 引用的关系是 t  ->ThreadLocal    当前线程的内部的ThreadLocalMap(k,v)  k--->ThreadLocal
          *
          * 如果k是强引用指向了ThreadLocal,那么即使t==null;但是k的引用依然指向了ThreadLocal对象,所以会有内存泄漏的问题
          *
