@@ -1,6 +1,7 @@
 package ThreadLearn.aqs;
 
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @author xz
@@ -9,6 +10,9 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 public class Start {
     public static void main(String[] args) {
+
         AbstractQueuedSynchronizer abstractQueuedSynchronizer;
+        ReentrantLock reentrantLock = new ReentrantLock();
+        reentrantLock.newCondition();
     }
 }
