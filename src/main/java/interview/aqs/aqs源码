@@ -68,6 +68,7 @@ aqs:一个等待队列 一个状态(锁的状态 数字 因为有可重入锁的
                         }
                     }
                 }
+
 5--acquireQueued
 
                        for (;;) {
@@ -148,9 +149,18 @@ aqs:一个等待队列 一个状态(锁的状态 数字 因为有可重入锁的
 
                 Node s = node.next;
                 //从后往前取得当前队列中的第一个等待节点（并且状态<=0,就是可以竞争锁的状态）
-                //如果s为空 为啥会为空 前面在add的时候是先设置前驱 再cas设置前驱的后继为该节点 这一步可能还未执行完 通过next拿不到 得到null
+                //如果s为空 为啥会为空 前面在add的时候是先设置前驱 再cas设置前驱的后继为该节点 这一步可能还未执行完 通过next拿不到 得到null??是否正确?
+
                 if (s == null || s.waitStatus > 0) {
                     s = null;
+                    //从后尾部往前遍历找到最前的一个处于正常阻塞状态的结点, 至于为什么从尾部开始向前遍历
+
+
+                    其最根本的原因在于：
+                    node.prev = t;先于CAS执行，也就是说，你在将当前节点置为尾部之前就已经把前驱节点赋值了，自然不会出现prev=null的情况
+
+
+
                     for (Node t = tail; t != null && t != node; t = t.prev)
                         if (t.waitStatus <= 0)
                             s = t;
@@ -426,3 +436,40 @@ FairSync 公平锁
     7、当B线程调用await方法后，会将B线程加入到条件等待队列，并释放锁，唤醒同步队列中的线程A，并阻塞当前线程，此时线程A继续执行。
     8、一旦线程A执行完毕，需调用signal方法后（将线程B从条件等待队列中移至到同步队列），然后调用unlock释放锁并唤醒线程B，线程B就可以继续执行了，直到执行结束。
     ————————————————
+
+
+在 AQS 的 wait queue 中, 每个结点 status 都保存在它的前驱结点中 ( predecessor ). 那么为什么要这么设计?
+    用每个结点保存自己的 status, 然后只有当该结点是头结点并且 tryAcquire 成功时再将 head 指向下一个结点不可以么?
+    可以. 但是麻烦些. 因为在第一个结点入列或是结点数减少到1 时就要求既保证 head 的 CAS 设置, 又要保证 tail的.
+    那么如果我只将 head 视作一个逻辑头结点 ( dummy node ) 呢? 这样, 很自然的, 它存储第二个结点的状态
+    第二个结点存储第三个结点的状态, 以此类推. 我就只需要控制 tail 的 CAS 设置了.
+    对于一个指定的结点, 我们获取它的状态最方便的就是通过一个 prev 引用获取其前驱结点, 然后获取存储在其中的状态. 所以prev 引用是务必要保证可靠
+    由于双向链表实现的队列在入列时包含两个链接的操作 ( tail.next = node; node.prev = tail ).
+    而 CAS 只能保证对一个变量的操作的原子性. 因此重点是保证 prev 引用的可靠, 而非 next 引用的.
+    原 CLH 算法并没有 next 引用, Doug Lea 在此做出了优化, 但是不保证一个结点通过 next 引用一定能其后继结点.
+    可以理解为一次快速尝试. 但是由于 prev 是可靠的, 因而我们一定能通过从 tail 开始反向遍历的方式找到一个结点.
+
+        private Node enq(final Node node) {
+            for (;;) {
+                Node t = tail;
+                if (t == null) { // Must initialize
+                    if (compareAndSetHead(new Node()))
+                        tail = head;
+                } else {
+                    node.prev = t; 1-----
+                    if (compareAndSetTail(t, node)) { 2----
+                        t.next = node; 3---
+                        return t;
+                    }
+                }
+            }
+        }
+    处将新结点 node 的 prev 引用指向当前的 t, 即 tail 结点. 然而, 由于 1 2 这两行代码的合在一起并非原子性的
+    所以很有可能在设置 tail 时存在着竞争, 也即 tail 被其它线程更新过了. 所以要自旋操作, 即在死循环中操作, 直到成功为止.
+    自旋地 CAS volatile 变量是很经典的用法. 如果设置成功了, 那么 从 node.prev 执行完毕到正在用 CAS 设置 tail 时, tail 变量是没有被修改的
+    所以如果 CAS成功, 那么 node.prev = t 一定是指向上一个 tail 的. 同样的,2,3 合在一起也并非原子操作, 更重要的是
+    next field 的设置发生在 CAS 操作之后, 所以可能会存在 tail 已经更新
+    但是 last tail 的 next field 还未设置完毕, 即它的 lastTail.next 为 null 这种情况
+    因此如果此时访问该结点的 next 引用可能就会得到它在队尾, 不存在后继结点的"错觉".
+    而我们总是能够通过从 tail 开始反向查找, 借助可靠的 prev 引用来定位到指定的结点
+
