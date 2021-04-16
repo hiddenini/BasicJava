@@ -1,0 +1,201 @@
+1--putVal()
+        final V putVal(K key, V value, boolean onlyIfAbsent) {
+            //key和value都不能为空
+            if (key == null || value == null) throw new NullPointerException();
+            //求hash值 进行扰动 得到的结果一定是一个正数
+            //return (h ^ (h >>> 16)) & HASH_BITS;
+            //HASH_BITS 二进制是011111111.... 保证最高位是0
+            int hash = spread(key.hashCode());
+            //用来记录所在table数组中的桶的中链表的个数，后面会用于判断是否链表过长需要转红黑树
+            int binCount = 0;
+            for (Node<K,V>[] tab = table;;) {
+                Node<K,V> f; int n, i, fh;
+                if (tab == null || (n = tab.length) == 0)
+                    tab = initTable();
+                    //hash之后看该位置是否有元素 没有则直接cas插入
+                else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+                    if (casTabAt(tab, i, null,
+                                 new Node<K,V>(hash, key, value, null)))
+                        break;                   // no lock when adding to empty bin
+                }
+                //如果hash得到的hash值为MOVED 证明正在扩容 那么协助扩容
+                else if ((fh = f.hash) == MOVED)
+                    tab = helpTransfer(tab, f);
+                else {
+                //否则进行添加
+                    V oldVal = null;
+                    //对当前桶加锁 执行添加操作
+                    synchronized (f) {
+                        if (tabAt(tab, i) == f) {
+                        //如果是普通链表节点 那么执行链表操作
+                            if (fh >= 0) {
+                                binCount = 1;
+                                for (Node<K,V> e = f;; ++binCount) {
+                                    K ek;
+                                    //如果找到了同样的key那么进行覆盖
+                                    if (e.hash == hash &&
+                                        ((ek = e.key) == key ||
+                                         (ek != null && key.equals(ek)))) {
+                                        oldVal = e.val;
+                                        if (!onlyIfAbsent)
+                                            e.val = value;
+                                        break;
+                                    }
+                                    //否则插入到链表的最后
+                                    Node<K,V> pred = e;
+                                    if ((e = e.next) == null) {
+                                        pred.next = new Node<K,V>(hash, key,
+                                                                  value, null);
+                                        break;
+                                    }
+                                }
+                            }
+                            else if (f instanceof TreeBin) {
+                                Node<K,V> p;
+                                binCount = 2;
+                                if ((p = ((TreeBin<K,V>)f).putTreeVal(hash, key,
+                                                               value)) != null) {
+                                    oldVal = p.val;
+                                    if (!onlyIfAbsent)
+                                        p.val = value;
+                                }
+                            }
+                        }
+                    }
+                    if (binCount != 0) {
+                    //如果链表节点大于等于TREEIFY_THRESHOLD 8
+                        if (binCount >= TREEIFY_THRESHOLD)
+                        //树化 不一定一定树化
+                            treeifyBin(tab, i);
+                        if (oldVal != null)
+                            return oldVal;
+                        break;
+                    }
+                }
+            }
+            //维护长度 以及是否需要扩容
+            addCount(1L, binCount);
+            return null;
+        }
+
+2--treeifyBin()
+
+        private final void treeifyBin(Node<K,V>[] tab, int index) {
+            Node<K,V> b; int n, sc;
+            if (tab != null) {
+            //如果tab数组的长度<MIN_TREEIFY_CAPACITY  64 那么 resizes instead
+                if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
+                    tryPresize(n << 1);
+                    //否则进行树化
+                else if ((b = tabAt(tab, index)) != null && b.hash >= 0) {
+                    synchronized (b) {
+                        if (tabAt(tab, index) == b) {
+                            TreeNode<K,V> hd = null, tl = null;
+                            for (Node<K,V> e = b; e != null; e = e.next) {
+                                TreeNode<K,V> p =
+                                    new TreeNode<K,V>(e.hash, e.key, e.val,
+                                                      null, null);
+                                if ((p.prev = tl) == null)
+                                    hd = p;
+                                else
+                                    tl.next = p;
+                                tl = p;
+                            }
+                            setTabAt(tab, index, new TreeBin<K,V>(hd));
+                        }
+                    }
+                }
+            }
+        }
+
+
+3--addCount（）
+
+           private final void addCount(long x, int check) {
+           //维护集合长度
+               CounterCell[] as; long b, s;
+               if ((as = counterCells) != null ||
+                   !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+                   CounterCell a; long v; int m;
+                   boolean uncontended = true;
+                   if (as == null || (m = as.length - 1) < 0 ||
+                       (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
+                       !(uncontended =
+                         U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+                       fullAddCount(x, uncontended);
+                       return;
+                   }
+                   if (check <= 1)
+                       return;
+                   s = sumCount();
+               }
+                //进行扩容
+               if (check >= 0) {
+                   Node<K,V>[] tab, nt; int n, sc;
+                   while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
+                          (n = tab.length) < MAXIMUM_CAPACITY) {
+                       int rs = resizeStamp(n);
+                       if (sc < 0) {
+                           if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
+                               sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
+                               transferIndex <= 0)
+                               break;
+                           if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                               transfer(tab, nt);
+                       }
+                       else if (U.compareAndSwapInt(this, SIZECTL, sc,
+                                                    (rs << RESIZE_STAMP_SHIFT) + 2))
+                           transfer(tab, null);
+                       s = sumCount();
+                   }
+               }
+           }
+
+
+
+
+
+4--fullAddCount()
+
+cas     +    baseCount   +   CounterCell
+
+
+5--sumCount() 集合的长度就等于baseCount累加上counterCells中所有值
+    baseCount+counterCells[i]
+
+6--
+
+3--sizeCtl
+      sizeCtl为0 代表数组未初始化 且数组的初始化容量为16
+      sizeCtl为正数 如果数组未初始化 那么记录的是数组的初始化容量 如果数组已经初始化 那么记录的是数组的扩容阈值(数组的初始容量*0.75)
+      sizeCtl为-1 表示数组正在进行初始化
+      sizeCtl小于0 并且不是-1 表示数组正在扩容-(1+n) 表示此时有n个线程正在共同完成数组的扩容操作
+
+
+4--initTable()
+            private final Node<K,V>[] initTable() {
+                Node<K,V>[] tab; int sc;
+                while ((tab = table) == null || tab.length == 0) {
+                //如果size的值<0 说明此时正在初始化 让出cpu
+                    if ((sc = sizeCtl) < 0)
+                        Thread.yield(); // lost initialization race; just spin
+                    //cas设置SIZECTL为-1
+                    else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
+                        try {
+                        //dcl检查
+                            if ((tab = table) == null || tab.length == 0) {
+                                int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
+                                @SuppressWarnings("unchecked")
+                                Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
+                                table = tab = nt;
+                                sc = n - (n >>> 2);
+                            }
+                        } finally {
+                            //设置sizeCtl为扩容阈值
+                            sizeCtl = sc;
+                        }
+                        break;
+                    }
+                }
+                return tab;
+            }
