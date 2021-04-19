@@ -1,0 +1,251 @@
+1-- put(E e)
+    public void put(E e) throws InterruptedException {
+        if (e == null) throw new NullPointerException();
+        int c = -1;
+        Node<E> node = new Node<E>(e);
+        final ReentrantLock putLock = this.putLock;
+        final AtomicInteger count = this.count;
+        // 获取锁中断
+        putLock.lockInterruptibly();
+        try {
+            //判断队列是否已满，如果已满阻塞等待
+            while (count.get() == capacity) {
+                notFull.await();
+            }
+            // 把node放入队列中
+            enqueue(node);
+            c = count.getAndIncrement();
+            // 再次判断队列是否有可用空间，如果有唤醒下一个线程进行添加操作
+            if (c + 1 < capacity)
+                notFull.signal();
+        } finally {
+            putLock.unlock();
+        }
+        // 如果队列中有一条数据，唤醒消费线程进行消费
+        if (c == 0)
+            signalNotEmpty();
+    }
+
+队列已满，阻塞等待。
+队列未满，创建一个node节点放入队列中，如果放完以后队列还有剩余空间，继续唤醒下一个添加线程进行添加。如果放之前队列中没有元素，放完以后要唤醒消费线程进行消费
+
+2--enqueue()
+
+        private void enqueue(Node<E> node) {
+            // assert putLock.isHeldByCurrentThread();
+            // assert last.next == null;
+            last = last.next = node;
+        }
+
+3--signalNotEmpty()
+
+        private void signalNotEmpty() {
+            final ReentrantLock takeLock = this.takeLock;
+            takeLock.lock();
+            try {
+                notEmpty.signal();
+            } finally {
+                takeLock.unlock();
+            }
+        }
+
+4--signalNotFull()
+
+    private void signalNotFull() {
+        final ReentrantLock putLock = this.putLock;
+        putLock.lock();
+        try {
+            notFull.signal();
+        } finally {
+            putLock.unlock();
+        }
+    }
+
+5--offer(E e)
+
+       public boolean offer(E e) {
+           if (e == null) throw new NullPointerException();
+           final AtomicInteger count = this.count;
+           if (count.get() == capacity)
+               return false;
+           int c = -1;
+           Node<E> node = new Node<E>(e);
+           final ReentrantLock putLock = this.putLock;
+           putLock.lock();
+           try {
+               // 队列有可用空间，放入node节点，判断放入元素后是否还有可用空间，
+               // 如果有，唤醒下一个添加线程进行添加操作。
+               if (count.get() < capacity) {
+                   enqueue(node);
+                   c = count.getAndIncrement();
+                   if (c + 1 < capacity)
+                       notFull.signal();
+               }
+           } finally {
+               putLock.unlock();
+           }
+           if (c == 0)
+               signalNotEmpty();
+           return c >= 0;
+       }
+可以看到offer仅仅对put方法改动了一点点，当队列没有可用元素的时候，不同于put方法的阻塞等待，offer方法直接方法false。
+
+
+6--take()
+
+    public E take() throws InterruptedException {
+        E x;
+        int c = -1;
+        final AtomicInteger count = this.count;
+        final ReentrantLock takeLock = this.takeLock;
+        takeLock.lockInterruptibly();
+        try {
+            // 队列为空，阻塞等待
+            while (count.get() == 0) {
+                notEmpty.await();
+            }
+            x = dequeue();
+            c = count.getAndDecrement();
+            // 队列中还有元素，唤醒下一个消费线程进行消费
+            if (c > 1)
+                notEmpty.signal();
+        } finally {
+            takeLock.unlock();
+        }
+        // 移除元素之前队列是满的，唤醒生产线程进行添加元素
+        if (c == capacity)
+            signalNotFull();
+        return x;
+    }
+
+队列为空，阻塞等待。
+队列不为空，从队首获取并移除一个元素，如果消费后还有元素在队列中，继续唤醒下一个消费线程进行元素移除
+如果放之前队列是满元素的情况，移除完后要唤醒生产线程进行添加元素。
+
+7--dequeue()
+
+    private E dequeue() {
+           // assert takeLock.isHeldByCurrentThread();
+           // assert head.item == null;
+           //拿到头节点
+           Node<E> h = head;
+           //保存头节点的下一个节点
+           Node<E> first = h.next;
+           //head节点原来指向的节点的next指向自己，等待下次gc回收
+           h.next = h; // help GC
+           //head指向新的头节点
+           head = first;
+           E x = first.item;
+            // 新head节点的item值设置为null
+           first.item = null;
+           return x;
+       }
+
+poll方法去除了take方法中元素为空后阻塞等待这一步骤，这里也就不详细说了。
+同理，poll(long timeout, TimeUnit unit)也和offer(E e, long timeout, TimeUnit unit)一样
+利用了Condition的awaitNanos方法来进行阻塞等待直至超时。这里就不列出来说了。
+
+8--peek()
+
+    public E peek() {
+        if (count.get() == 0)
+            return null;
+        final ReentrantLock takeLock = this.takeLock;
+        takeLock.lock();
+        try {
+            //获取到head节点的next节点
+            Node<E> first = head.next;
+            if (first == null)
+                return null;
+            else
+                //返回next节点的item值
+                return first.item;
+        } finally {
+            takeLock.unlock();
+        }
+    }
+
+9--remove()
+
+    public boolean remove(Object o) {
+        if (o == null) return false;
+        // 两个lock全部上锁
+        fullyLock();
+        try {
+            // 从head开始遍历元素，直到最后一个元素
+            for (Node<E> trail = head, p = trail.next;
+                 p != null;
+                 trail = p, p = p.next) {
+                // 如果找到相等的元素，调用unlink方法删除元素
+                if (o.equals(p.item)) {
+                    unlink(p, trail);
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            // 两个lock全部解锁
+            fullyUnlock();
+        }
+    }
+
+    void fullyLock() {
+        putLock.lock();
+        takeLock.lock();
+    }
+
+    void fullyUnlock() {
+        takeLock.unlock();
+        putLock.unlock();
+    }
+
+
+10-- unlink()
+
+            void unlink(Node<E> p, Node<E> trail) {
+                // p的元素置为null
+                p.item = null;
+                //前驱的next指向p的后继 也就是把p从链表中去除了
+                trail.next = p.next;
+                //如果last指向p 那么删除p之后需要将last指向p的前驱trail
+                if (last == p)
+                    last = trail;
+                // 如果删除之前元素是满的，删除之后就有空间了，唤醒生产线程放入元素
+                if (count.getAndDecrement() == capacity)
+                    notFull.signal();
+            }
+
+
+11--Itr()
+
+    Itr() {
+        fullyLock();
+        try {
+            current = head.next;
+            if (current != null)
+                currentElement = current.item;
+        } finally {
+            fullyUnlock();
+        }
+    }
+
+
+
+    private Node<E> nextNode(Node<E> p) {
+        for (;;) {
+            // 解决了问题1
+            Node<E> s = p.next;
+            if (s == p)
+                return head.next;
+            if (s == null || s.item != null)
+                return s;
+            p = s;
+        }
+
+为什么dequeue里的h.next不指向null，而指向h？
+迭代器的遍历分为两步，第一步加双锁把元素放入临时变量中，第二部遍历临时变量的元素
+也就是说remove可能和迭代元素同时进行，很有可能remove的时候，有线程在进行迭代操作
+为了正确遍历，nextNode使用了 s == p的判断，当下一个元素是自己本身时，返回head的下一个节点
+
+为什么unlink里没有p.next = null或者p.next = p这样的操作？
+如果unlink中改变了p的next，很有可能在迭代的时候会造成错误，造成不一致问题。这个解决了问题2
