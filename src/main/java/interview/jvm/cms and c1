@@ -1,0 +1,20 @@
+https://javap.blog.csdn.net/article/details/109558171?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-2.control&dist_request_id=1331989.253.16187412109541653&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-2.control
+
+白色：还没有搜索过的对象
+灰色：正在搜索的对象
+黑色：搜索完成的对象
+
+刚开始，所有的对象都是白色，没有被访问。
+将GC Roots直接关联的对象置为灰色。
+遍历灰色对象的所有引用，灰色对象本身置为黑色，引用置为灰色。
+重复步骤3，直到没有灰色对象为止。
+结束时，黑色对象存活，白色对象回收
+
+在进行垃圾标记的过程中 可能会发生下面的场景
+用户线程将本来是灰色对象引用的对象修改为了黑色对象的引用 由于置为黑色的对象后面不会再被扫描那么这个对象就被当作垃圾回收了
+
+
+对象消失问题：扫描过程中插入了一条或者多条从黑色对象到白色对象的新引用,并且同时去掉了灰色对象到该白色对象的直接引用或者间接引用
+
+增量更新:记录下黑色对象到白色对象的新引用 等到并发扫描结束后再扫描下这些记录 cms
+原始快照:在删除灰色对象到白色对象的引用时记录下，并发扫描结束后再扫描下这些记录 是否真的被删除了 g1
