@@ -15,3 +15,126 @@ select: 一个线程请求一次内核 将1000个文件描述符传递给内核 
 epoll: 文件描述符很多时效率会变差 使用mmap减少复制开销。只管“活跃”的连接，而跟连接总数无关
 
 https://blog.csdn.net/wteruiycbqqvwt/article/details/90299610
+
+String:
+set key value nx 不存在时才能操作 分布式锁
+
+set key value xx 存在时才能操作  只能更新
+
+redis是二进制安全的:二进制安全是一种主要用于字符串操作函数相关的计算机编程术语。一个二进制安全功能（函数）
+其本质上将操作输入作为原始的、无任何特殊格式意义的数据流。对于每个字符都公平对待，不特殊处理某一个字符。
+
+C语言中的字符串是根据特殊字符“\0”来判断该字符串是否结束，对于字符串str="0123456789\0123456789”来说
+在C语言里面str的长度就是10（strlen(str)=10），所以strlen()函数不是二进制安全的。
+而在Redis中，strlen str的结果是21，是二进制安全的（Redis底层所使用的字符串表示是Sds）
+它只关心二进制化的字符串，不关心字符串的具体格式，里面有啥字符，只会严格的按照二进制的数据存取，不会以某种特殊格式解析字符串。
+
+bitmap
+使用场景:记录用户签到     用户id为key 天数为位
+setbit zjw 0 1          每个用户一个key  每一位代表一天
+
+setbit zjw 3 1
+
+setbit zjw 7 1
+
+//统计zjw 这个key的1的个数 即签到的次数
+bitcount zjw 0 -1
+
+每个用户需要365/8 =46B 字节 假设1000000用户 需要 46000000B=44922K=43M
+
+记录活跃用户          天数为key 用户id为位
+                     每一天一个key  每一位代表一个用户  0代表用户A 7代表用户B
+setbit 20210423 0 1
+setbit 20210423 7 1
+
+setbit 20210422 7 1
+
+bitop or dest 20210423 20210422
+
+bitcount dest 0 -1 ===>2
+
+
+list
+lpush lpop
+
+rpush rpop
+
+同向为栈 反向为队列
+
+lindex book 1  用index类似数组  但是需要对链表进行遍历 O(n) 要慎用
+
+
+hash
+
+
+set  场景 存放终将用户的id 不会重复
+
+sadd
+
+sinter h1 h2  交集
+
+sinterstore dest h1 h2 交集并生成新key
+
+sdiff h1 h2 差集 h1 和h2的差集
+
+抽奖:将用户放在 set中
+
+sradommember s1 3
+
+如果 count 为正数，且小于集合基数，那么命令返回一个包含 count 个元素的数组，数组中的元素各不相同
+如果 count 大于等于集合基数，那么返回整个集合。
+
+如果 count 为负数，那么命令返回一个数组，数组中的元素可能会重复出现多次，而数组的长度为 count 的绝对值。
+
+spop 弹出一个
+
+zset
+
+zadd z1 8 apple 3 banana 7 orange
+
+zrange z1 0 -1  按score顺序输出 从小到大
+
+zrevrange z1 0 -1  按score逆序输出 从大到小
+
+Zrank 返回有序集中指定成员的排名。其中有序集成员按分数值递增(从小到大)顺序排列。
+
+zunion
+
+zunionstore des 2 z2 z3
+
+Redis Zunionstore 命令计算给定的一个或多个有序集的并集，其中给定 key 的数量必须以 numkeys 参数指定，并将该并集(结果集)储存到 destination 。
+
+默认情况下，结果集中某个成员的分数值是所有给定集下该成员分数值之和
+
+
+管道  pipeline
+跟服务器没啥关系 只是客户端改变了读写的顺序带来的性能的巨大提升
+
+pubsub
+
+publish channel1  hello
+
+subscribe channel1
+
+展示最近三天的聊天记录
+
+时间为分数 消息为数据
+
+布隆过滤器
+没有那肯定是没有
+有其实可能没有
+bitmap +几个hash函数
+
+add 每个hash函数对key进行hash 得到value value对bitmap位数取模 得到一个bitmap中一个位置 置为1 每个hash都算算得一个位置 把bitmap中的
+这几个位置都置为1  add结束
+
+contains  和add一样找到几个位置 如果只要有一位为0 说明肯定不存在  所有位都为1 说明大概率存在 但是有可能误判 因为有的位置的1是其他的key导致的
+
+
+key的过期
+1--不会随着访问延长
+2--发生写则剔除过期时间
+3--定时 expireat key timestamp
+
+
+
