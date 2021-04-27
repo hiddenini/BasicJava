@@ -77,7 +77,7 @@ select-->poll-->epoll
     Redis使用默认的异步复制，其特点是低延迟和高性能
 
 
-   主从同步
+   主从同步(主要是解决单点故障)
    从节点刚加入近集群时，必须先进行一次快照同步
    快照同步:先在主节点做一次bgsave 将快照文件传输到从节点 从节点先删除old data，进行全量加载
 
@@ -110,6 +110,22 @@ select-->poll-->epoll
    哨兵可以从主节点那里知道从节点的信息，那么是如何知道其他哨兵的信息的?
 
    是使用redis自带的发布订阅
+
+   集群(主要是解决容量问题)
+   1--key % redis 数目 问题是扩容时redis数目变化 那么所有缓存的位置都会发生改变
+   2--一致性hash 也是取模  一致性的Hash算法是对2的32方取模
+   一致性Hash算法将整个Hash空间组织成一个虚拟的圆环，Hash函数的值空间为0 ~ 2^32 - 1(一个32位无符号整型)
+   https://www.jianshu.com/p/528ce5cd7e8f
+   数据倾斜问题
+   在一致性Hash算法服务节点太少的情况下，容易因为节点分布不均匀面造成数据倾斜（被缓存的对象大部分缓存在某一台服务器上）问题
+   为了解决数据倾斜问题，一致性Hash算法引入了虚拟节点机制，即对每一个服务器节点计算多个哈希，每个计算结果位置都放置一个此服务节点，称为虚拟节点。
+
+
+   codis
+   tw
+   predixy
+   cluster
+
 
 
 3--redis过期策略
@@ -157,3 +173,124 @@ select-->poll-->epoll
 6--一个最简单的分布式锁
                 "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 	这个lua脚本的意思是:获取redis中key为lockKey的值，如果和requestId相等的话则删除，否则啥都不做
+
+redis的数据结构
+
+String (Simple Dynamic String)
+
+struct sdshdr {
+
+    // buf 中已占用空间的长度
+    int len;
+
+    // buf 中剩余可用空间的长度
+    int free;
+
+    // 数据空间
+    char buf[];
+};
+
+redis的字符串有2种存储方式 embstr(长度比较短的时候) raw(长度比较短)
+
+
+hash
+使用了一种叫做渐进式哈希(rehashing)的机制来提高字典的缩放效率，避免 rehash 对服务器性能造成影响
+渐进式 rehash 的好处在于它采取分而治之的方式， 将 rehash 键值对所需的计算工作均摊到对字典的每个添加、删除、查找和更新操作上
+从而避免了集中式 rehash 而带来的庞大计算量
+
+https://www.cnblogs.com/williamjie/p/11205593.html
+
+在redis的实现中，没有集中的将原有的key重新rehash到新的槽中，而是分解到各个命令的执行中，以及周期函数中
+
+在redis中每一个增删改查命令中都会判断数据库字典中的哈希表是否正在进行渐进式rehash，如果是则帮助执行一次
+
+redis还有定时任务进行rehash
+
+
+服务器目前没有在执行 BGSAVE 命令或者 BGREWRITEAOF 命令， 并且哈希表的负载因子大于等于 1（即元素的个数已经超过了一维数组 但是在bgsave 为了减少内存页的过多分离 不会扩容）
+
+服务器目前正在执行 BGSAVE 命令或者 BGREWRITEAOF 命令， 并且哈希表的负载因子大于等于 5（即元素的个数已经超过了一维数组的五倍 那么强制扩容）
+
+以下是哈希表渐进式 rehash 的详细步骤：
+
+（1）为 ht[1] 分配空间， 让字典同时持有 ht[0] 和 ht[1] 两个哈希表。
+
+（2）在字典中维持一个索引计数器变量 rehashidx ， 并将它的值设置为 0 ， 表示 rehash 工作正式开始。
+
+（3）在 rehash 进行期间， 每次对字典执行添加、删除、查找或者更新操作时， 程序除了执行指定的操作以外， 还会顺带将 ht[0] 哈希表在 rehashidx 索引上的所有键值对 rehash 到 ht[1] ， 当 rehash 工作完成之后， 程序将 rehashidx 属性的值增一。
+
+（4）随着字典操作的不断执行， 最终在某个时间点上， ht[0] 的所有键值对都会被 rehash 至 ht[1] ， 这时程序将 rehashidx 属性的值设为 -1 ， 表示 rehash 操作已完成。
+
+渐进式 rehash 的好处在于它采取分而治之的方式， 将 rehash 键值对所需的计算工作均滩到对字典的每个添加、删除、查找和更新操作上， 从而避免了集中式 rehash 而带来的庞大计算量。
+
+因为在进行渐进式 rehash 的过程中， 字典会同时使用 ht[0] 和 ht[1] 两个哈希表， 所以在渐进式 rehash 进行期间， 字典的删除（delete）、查找（find）、更新（update）等操作会在两个哈希表上进行
+
+ 比如说， 要在字典里面查找一个键的话， 程序会先在 ht[0] 里面进行查找， 如果没找到的话， 就会继续到 ht[1] 里面进行查找， 诸如此类。
+
+
+另外， 在渐进式 rehash 执行期间， 新添加到字典的键值对一律会被保存到 ht[1] 里面， 而 ht[0] 则不再进行任何添加操作
+
+ 这一措施保证了 ht[0] 包含的键值对数量会只减不增， 并随着 rehash 操作的执行而最终变成空表。
+
+ziplist
+zset和hash在元素个数较少的时候采用ziplist存储
+
+压缩列表（ziplist）本质上就是一个字节数组，是Redis为了节约内存而设计的一种线性数据结构，可以包含任意多个元素，每个元素可以是一个字节数组或一个整数。
+
+压缩列表时一块连续的内存空间 元素之间紧挨着存储
+
+typedef struct ziplist<T>{
+...
+int32 zltail_offset 压缩列表尾元素相对于压缩列表起始地址的偏移量 用于快速定位到最后一个元素
+
+T[] entries
+....
+}
+
+struct entry{
+int<var> prevlen 前一个entry的长度 从后往前遍历的时候可以用来定位下一个元素 如果内容小于254字节 prevlen就用1字节存储
+
+否则就用5字节存储
+
+级联更新 如果某个entry经过操作从253字节变成了254字节 那么下一个entry的prevlen就需要更新 如果后面的entry的长度也是253 那么也要更新....
+
+..
+
+..
+}
+
+增加元素
+由于ziplist是数组 意味着插入一个新的元素就需要扩展内存 所以不适合存储大型字符串 存储的元素也不宜过多
+
+
+quicklist
+list早期使用的是ziplist(元素多的时候) 和linkedlist(元素少的时候) 由于链表的附加空间后面使用quicklist
+
+quicklist将linkedlist按段切分 每一段使用ziplist让存储紧凑 多个ziplist之间使用双向指针存储
+
+跳表 看下在Algo种的实现
+
+redis5.0 listpack
+
+typedef struct listpack<T>{
+       int32 total_bytes
+       int16 size
+       T[] entries
+       int8 end
+}
+相比于ziplist 少了tail字段
+
+typedef struct lpentry<T>{
+        int<var> encoding
+        optional byte[] content
+        int<var> length 记录的是本entry的长度
+}
+
+listpack是对ziplist的改进，它比ziplist少了一个定位最后一个元素的属性（最后一个元素距离起始偏移量）
+listpack无需这个字段辅助逆序遍历。它的entry将长度字段放在了尾部，且记录的是本entry的长度
+有了它就可以快速定位前一个entry的末尾，依然可以逆序遍历（在listpack定位到最后一个元素只需要
+总长度减去最后一个entry的长度即可）。这样本entry的属性不会出现在其他entry中了，消除了级联更新。
+但listpack目前只用在stream中。
+
+
+
